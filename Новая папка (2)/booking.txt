@@ -1,0 +1,198 @@
+-- Создание таблиц
+CREATE TABLE Airports (
+    Id INT PRIMARY KEY,
+    Name VARCHAR(50),
+    City VARCHAR(50)
+);
+
+CREATE TABLE Flights (
+    FlightNumber VARCHAR(10) PRIMARY KEY,
+    DepartureAirportId INT,
+    DepartureDateTime DATETIME,
+    ArrivalAirportId INT,
+    ArrivalDateTime DATETIME,
+    Price DECIMAL(10, 2),
+    AvailableTickets INT,
+    FOREIGN KEY (DepartureAirportId) REFERENCES Airports(Id),
+    FOREIGN KEY (ArrivalAirportId) REFERENCES Airports(Id)
+);
+
+CREATE TABLE Sales (
+    SaleId INT PRIMARY KEY,
+    SaleDateTime DATETIME,
+    BuyerName VARCHAR(50),
+    AgeCategory VARCHAR(20),
+    CardNumber VARCHAR(16),
+    PaymentSystem VARCHAR(50)
+);
+
+INSERT INTO Airports (Id, Name, City) VALUES 
+(1, 'Airport A', 'City A'),
+(2, 'Airport B', 'City B'),
+(3, 'Airport C', 'City C');
+
+INSERT INTO Flights (FlightNumber, DepartureAirportId, DepartureDateTime, ArrivalAirportId, ArrivalDateTime, Price, AvailableTickets) VALUES 
+('FL123', 1, '2022-09-15 08:00:00', 2, '2022-09-15 11:30:00', 100.00, 100),
+('FL456', 2, '2022-09-16 10:00:00', 3, '2022-09-16 14:30:00', 150.00, 80);
+
+INSERT INTO Sales (SaleId, SaleDateTime, BuyerName, AgeCategory, CardNumber, PaymentSystem) VALUES 
+(1, '2022-09-14 15:00:00', 'Alice', 'Adult', '1234567812345678', 'Visa'),
+(2, '2022-09-15 10:30:00', 'Bob', 'Child', '8765432187654321', 'MasterCard');
+
+1.
+DELIMITER //
+CREATE PROCEDURE GetFlightsWithDurationGreaterThan3Hours()
+BEGIN
+    SELECT FlightNumber, 
+           (SELECT Name FROM Airports WHERE Id = DepartureAirportId) AS DepartureAirport,
+           (SELECT Name FROM Airports WHERE Id = ArrivalAirportId) AS ArrivalAirport,
+           TIMESTAMPDIFF(HOUR, DepartureDateTime, ArrivalDateTime) AS FlightDurationInHours
+    FROM Flights
+    HAVING FlightDurationInHours > 3;
+END //
+DELIMITER ;
+
+
+2.
+DELIMITER //
+
+CREATE PROCEDURE CalculateTicketPrices()
+BEGIN
+    DECLARE adultPrice DECIMAL(10, 2);
+    DECLARE child7to14Price DECIMAL(10, 2);
+    DECLARE child0to7Price DECIMAL(10, 2);
+    
+    SELECT Price INTO adultPrice
+    FROM Flights
+    LIMIT 1;
+    
+    SET child7to14Price = 0.7 * adultPrice;
+    SET child0to7Price = 0.5 * adultPrice;
+    
+    SELECT FlightNumber, DepartureAirportId, ArrivalAirportId, adultPrice, child7to14Price, adultPrice, child0to7Price
+    FROM Flights
+    LIMIT 1;
+END//
+
+DELIMITER ;
+
+3.
+DELIMITER //
+
+CREATE PROCEDURE CalculateFinalTicketPrice()
+BEGIN
+    DECLARE flightDiscount DECIMAL(10, 2);
+    DECLARE flightCommission DECIMAL(10, 2);
+    DECLARE finalPrice DECIMAL(10, 2);
+    DECLARE ArrivalAirportName VARCHAR(50);
+    DECLARE CardNumber VARCHAR(16);
+    DECLARE PaymentSystem VARCHAR(50);
+    
+    SELECT FlightNumber, ArrivalAirportId, CardNumber, PaymentSystem, Price
+    INTO @FlightNumber, @ArrivalAirportId, @CardNumber, PaymentSystem, @Price
+    FROM Flights
+    LIMIT 1;
+    
+    SELECT Name INTO ArrivalAirportName
+    FROM Airports
+    WHERE Id = @ArrivalAirportId;
+    
+    IF ArrivalAirportName = 'City A' AND PaymentSystem = 'МИР' THEN
+        SET flightDiscount = 0.15 * @Price;
+        SET finalPrice = @Price - flightDiscount;
+    ELSEIF (ArrivalAirportName = 'City B' OR ArrivalAirportName = 'City C') AND PaymentSystem = 'VISA' THEN
+        SET flightCommission = 0.05 * @Price;
+        SET finalPrice = @Price + flightCommission;
+    ELSE
+        SET finalPrice = @Price;
+    END IF;
+    
+    SELECT @FlightNumber AS FlightNumber, ArrivalAirportName AS ArrivalAirport, @CardNumber AS CardNumber, PaymentSystem AS PaymentSystem, @Price AS InitialPrice, finalPrice AS FinalPrice;
+END//
+
+DELIMITER ;
+
+4.
+CREATE TABLE Booking (
+    DepartureCountry VARCHAR(50),
+    ArrivalCountry VARCHAR(50),
+    TotalTickets INT,
+    ChildTickets7 INT,
+    ChildTickets14 INT,
+    TotalPrice DECIMAL(10, 2)
+);
+
+DELIMITER //
+CREATE PROCEDURE BookTickets(
+    IN depCountry VARCHAR(50),
+    IN arrCountry VARCHAR(50),
+    IN totalTickets INT,
+    IN childTickets7 INT,
+    IN childTickets14 INT
+)
+BEGIN
+    DECLARE totalPrice DECIMAL(10, 2);
+
+    SET totalPrice = (totalTickets - childTickets7 - childTickets14) * (
+        SELECT Price
+        FROM Flights
+        WHERE DepartureAirportId = (SELECT Id FROM Airports WHERE City = depCountry)
+        AND ArrivalAirportId = (SELECT Id FROM Airports WHERE City = arrCountry)
+    );
+
+    INSERT INTO Booking (DepartureCountry, ArrivalCountry, TotalTickets, ChildTickets7, ChildTickets14, TotalPrice)
+    VALUES (depCountry, arrCountry, totalTickets, childTickets7, childTickets14, totalPrice);
+END //
+DELIMITER ;
+
+CALL BookTickets('City A', 'City B', 5, 1, 2);
+CALL BookTickets('City B', 'City C', 3, 0, 1);
+
+SELECT * FROM Booking;
+
+5.
+DELIMITER //
+
+CREATE PROCEDURE GenerateReport()
+BEGIN
+    DECLARE totalTickets INT;
+    DECLARE soldTickets INT;
+    DECLARE remainingTickets INT;
+    DECLARE adultPercentage DECIMAL(5,2);
+    DECLARE child7to14Percentage DECIMAL(5,2);
+    DECLARE child0to7Percentage DECIMAL(5,2);
+    DECLARE totalSalesAmount DECIMAL(10,2);
+
+    -- Общее количество билетов
+    SELECT SUM(AvailableTickets) INTO totalTickets FROM Flights;
+
+    -- Количество проданных билетов
+    SELECT COUNT(*) INTO soldTickets FROM Sales;
+
+    -- Остаток билетов на конец периода
+    SET remainingTickets = totalTickets - soldTickets;
+
+    -- Процентная доля взрослых пассажиров
+    SET adultPercentage = (SELECT (COUNT(CASE WHEN AgeCategory = 'Adult' THEN 1 END) / soldTickets) * 100 FROM Sales);
+
+    -- Процентная доля детей с 7 до 14 лет
+    SET child7to14Percentage = (SELECT (COUNT(CASE WHEN AgeCategory = 'Child' AND (YEAR(CURDATE()) - YEAR(DATE(SaleDateTime))) BETWEEN 7 AND 14 THEN 1 END) / soldTickets) * 100 FROM Sales);
+
+    -- Процентная доля детей с 0 до 7 лет
+    SET child0to7Percentage = (SELECT (COUNT(CASE WHEN AgeCategory = 'Child' AND (YEAR(CURDATE()) - YEAR(DATE(SaleDateTime))) < 7 THEN 1 END) / soldTickets) * 100 FROM Sales);
+
+    -- Общая сумма продаж
+    SELECT SUM(Price) INTO totalSalesAmount
+    FROM Flights
+    JOIN Sales ON Flights.DepartureAirportId = Sales.SaleId;
+
+    -- Вывод результатов
+    SELECT totalTickets AS TotalTickets, soldTickets AS SoldTickets, remainingTickets AS RemainingTickets,
+           adultPercentage AS AdultPercentage, child7to14Percentage AS Child7to14Percentage, child0to7Percentage AS Child0to7Percentage,
+           totalSalesAmount AS TotalSalesAmount;
+           
+END //
+
+DELIMITER ;
+
+
